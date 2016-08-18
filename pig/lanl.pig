@@ -102,6 +102,13 @@ comp_count = FOREACH comp_group GENERATE COUNT(comp.$0);
 ---------------------------------------------------------------------------
 -- Table of per-computer flow- and byte-counts:
 
+--------------------------------
+-- Method 1:
+--
+-- group all flows by src/dst using UNION;
+-- but note this will double the size of the data;
+-- fails on the full data set.
+
 flows_by_src = GROUP flows BY src;
 flows_by_dst = GROUP flows BY dst;
 flows_by_comp_union = UNION flows_by_src, flows_by_dst;
@@ -113,9 +120,51 @@ flows_by_comp = FOREACH flows_by_comp_gpd {
 flow_count = FOREACH flows_by_comp GENERATE comp,
 	     	     		   	    COUNT(flows) AS nflow,
 					    SUM(flows.bytes) AS nbyte;
+
+--------------------------------
+-- Method 2:
+--
+-- group and count by src and dst separately,
+-- then sum the results.
+-- Repeats code but keeps data output low.
+
+flows_by_src = GROUP flows BY src;
+flow_count_by_src = FOREACH flows_by_src GENERATE group AS cmp,
+	     	     		   	    COUNT(flows) AS nflow,
+					    SUM(flows.bytes) AS nbyte;
+flows_by_dst = GROUP flows BY dst;
+flow_count_by_dst = FOREACH flows_by_dst GENERATE group AS cmp,
+	     	     		   	    COUNT(flows) AS nflow,
+					    SUM(flows.bytes) AS nbyte;
+flow_count_two_way = UNION flow_count_by_src, flow_count_by_dst;
+flow_count_gpd = GROUP flow_count_two_way BY cmp;
+flow_count = FOREACH flow_count_gpd GENERATE group AS cmp,
+	     	     		   	    SUM(flow_count_two_way.nflow) AS nflow,
+					    SUM(flow_count_two_way.nbyte) AS nbyte;
+
+--------------------------------
+-- Method 3:
+--
+-- Same as 2, but retain in and out information.
+
+flows_by_src = GROUP flows BY src;
+flow_count_by_src = FOREACH flows_by_src GENERATE group AS cmp,
+	     	     		   	    COUNT(flows) AS outflow,
+					    SUM(flows.bytes) AS outbyte;
+flows_by_dst = GROUP flows BY dst;
+flow_count_by_dst = FOREACH flows_by_dst GENERATE group AS cmp,
+	     	     		   	    COUNT(flows) AS inflow,
+					    SUM(flows.bytes) AS inbyte;
+flow_count = JOIN flow_count_by_src BY cmp FULL OUTER, flow_count_by_dst BY cmp;
+
+--------------------------------
+-- write results:
+
 STORE flow_count INTO 'comp_table';
 
+--------------------------------
 -- shell clean-up:
+
 sh cat ./comp_table/part* > ./comp_table.txt
 sh rm -r comp_table
 
