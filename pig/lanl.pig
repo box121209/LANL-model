@@ -160,7 +160,7 @@ flow_count = JOIN flow_count_by_src BY cmp FULL OUTER, flow_count_by_dst BY cmp;
 --------------------------------
 -- write results:
 
-STORE flow_count INTO 'comp_table';
+STORE flow_count INTO 'comp_table' USING PigStorage(',');
 
 --------------------------------
 -- shell clean-up:
