@@ -4,8 +4,8 @@
 -- bag as an array of records.
 -- Input: (time, duration, src, src_pt, dst, dst_pt, proto, pkts, bytes) 
 
-flows = LOAD '/Users/wmoxbury/data/LANL/flows.txt' USING PigStorage(',') -- for real
--- flows = LOAD '/Users/wmoxbury/data/LANL/smallflows.txt' USING PigStorage(',') -- for dev
+-- flows = LOAD '/Users/wmoxbury/data/LANL/flows.txt' USING PigStorage(',') -- for real
+flows = LOAD '/Users/wmoxbury/data/LANL/smallflows.txt' USING PigStorage(',') -- for dev
       	AS (time:int,
 	    duration:int,
 	    src:chararray,
@@ -171,18 +171,91 @@ sh rm -r comp_table
 ---------------------------------------------------------------------------
 -- Histograms of per-computer flow- and byte-counts:
 
-flow_count = LOAD './comp_table.txt' USING PigStorage('\t')
-	     AS (comp:chararray, nflow:double, nbyte:double);
+flow_count = LOAD './comp_table.txt' USING PigStorage(',')
+	     AS (src:chararray,
+	     	 outflow:double,
+		 outbyte:double,
+		 dst:chararray,
+	     	 inflow:double,
+		 inbyte:double);
 
-nflow_gpd = GROUP flow_count BY FLOOR(LOG(nflow)/LOG(2));
+nflow_gpd = GROUP flow_count BY FLOOR(LOG(inflow + outflow)/LOG(2));
 nflow_hist = FOREACH nflow_gpd GENERATE group AS lg_nflow, COUNT($1) AS freq;
 \d nflow_hist
 
-nbyte_gpd = GROUP flow_count BY FLOOR(LOG(nbyte)/LOG(2));
+/*------
+(1.0,25)
+(2.0,61)
+(3.0,84)
+(4.0,110)
+(5.0,118)
+(6.0,146)
+(7.0,137)
+(8.0,218)
+(9.0,309)
+(10.0,395)
+(11.0,675)
+(12.0,1605)
+(13.0,1750)
+(14.0,1267)
+(15.0,691)
+(16.0,163)
+(17.0,38)
+(18.0,11)
+(19.0,8)
+(20.0,11)
+(21.0,7)
+(22.0,5)
+(23.0,3)
+(24.0,1)
+(,3316)   -- computers with one of inflow/outflow equal to 0 
+------*/
+
+nbyte_gpd = GROUP flow_count BY FLOOR(LOG(inbyte + outbyte)/LOG(2));
 nbyte_hist = FOREACH nbyte_gpd GENERATE group AS lg_nbyte, COUNT($1) AS freq;
 \d nbyte_hist
 
--- 
+/*------
+(6.0,5)
+(7.0,1)
+(8.0,1)
+(9.0,7)
+(10.0,11)
+(11.0,13)
+(12.0,20)
+(13.0,42)
+(14.0,66)
+(15.0,64)
+(16.0,111)
+(17.0,106)
+(18.0,90)
+(19.0,111)
+(20.0,145)
+(21.0,149)
+(22.0,209)
+(23.0,228)
+(24.0,412)
+(25.0,607)
+(26.0,725)
+(27.0,1447)
+(28.0,1384)
+(29.0,870)
+(30.0,474)
+(31.0,218)
+(32.0,111)
+(33.0,72)
+(34.0,52)
+(35.0,33)
+(36.0,21)
+(37.0,12)
+(38.0,6)
+(39.0,5)
+(40.0,2)
+(41.0,4)
+(42.0,4)
+(,3316)   -- computers with one of inbyte/outbyte equal to 0 
+------*/
+
 ---------------------------------------------------------------------------
 -- Count port frequencies using REGEX to group...
 
@@ -217,10 +290,16 @@ icmp_edges = FOREACH icmp_edge_flows
 	     	      SUM(icmp_flows.duration) AS duration,
 		      SUM(icmp_flows.bytes) AS bytes;
 
-STORE icmp_edges INTO 'icmp_edges';
-sh cat ./icmp_edges/part* > ./icmp_edges.txt
-icmp_edges = LOAD './icmp_edges.txt' USING PigStorage('\t')
-	     AS ();
+STORE icmp_edges INTO 'icmp_edges' USING PigStorage(',');
+sh cat ./icmp_edges/part* | tr -d '()' > ./icmp_edges.txt
+
+-- and load for follow-on calculations:
+
+icmp_edges = LOAD './icmp_edges.txt' USING PigStorage(',')
+	     AS (src:chararray,
+	         dst:chararray,
+	         duration:long,
+		 bytes:long);
 
 ---------------------------------------------------------------------------
 -- Count vertices and edges
@@ -230,40 +309,74 @@ icmp_edges_gpd = GROUP icmp_edges ALL;
 icmp_edge_count = FOREACH icmp_edges_gpd GENERATE COUNT($1);
 \d icmp_edge_count
 
+-- (43231)
+
 -- vertex count:
-icmp_from_rpt = FOREACH icmp_edges GENERATE edge.$0 AS vertex;
-icmp_from = DISTINCT icmp_from_rpt;
-
-icmp_to_rpt = FOREACH icmp_edges GENERATE edge.$1 AS vertex;
-icmp_to = DISTINCT icmp_to_rpt;
-
-/*--------------------------------
--- fix for an apparent bug;
--- lazy evaluation doesn't seem to work...
--- see
--- https://qnalist.com/questions/1905/union-causes-classcastexception
--- BUT this is 4 years old!! :(
-
-STORE icmp_from INTO 'icmp_from';
-STORE icmp_to INTO 'icmp_to';
-
--- recover:
-sh cat ./icmp_from/part* > ./icmp_from.txt
-sh rm -r icmp_from
-icmp_from = LOAD './icmp_from.txt' USING PigStorage('\t')
-	     AS (vertex:chararray);
-
-sh cat ./icmp_to/part* > ./icmp_to.txt
-sh rm -r icmp_to
-icmp_to = LOAD './icmp_to.txt' USING PigStorage('\t')
-	     AS (vertex:chararray);
---------------------------------*/
-
+icmp_from = FOREACH icmp_edges GENERATE src AS vertex;
+icmp_to = FOREACH icmp_edges GENERATE dst AS vertex;
 icmp_all = UNION icmp_from, icmp_to;
 icmp_vertices = DISTINCT icmp_all;
 icmp_vertices_gpd = GROUP icmp_vertices ALL;
 icmp_vertex_count = FOREACH icmp_vertices_gpd GENERATE COUNT($1);
+
 \d icmp_vertex_count
 
+-- (8767)
+
+/*--------------------------------
+-- BUT note an apparent bug in case icmp_edges not stored/loaded,
+-- but part of data flow from flows.txt;
+-- lazy evaluation doesn't seem to work here...
+-- see
+-- <https://qnalist.com/questions/1905/union-causes-classcastexception>
+-- and this is 4 years old!! :(
+--------------------------------*/
 
 ---------------------------------------------------------------------------
+-- Connected components
+
+-- step 0: initialise virtual edges
+virtual_edges = FOREACH icmp_edges GENERATE src, dst;
+
+-- step 1: generate index
+virtual_edges_by_src = GROUP virtual_edges BY src;
+in_set = FOREACH virtual_edges_by_src {
+      		A = MIN($1.dst);
+		B = (A < group? A: group);
+		C = $1.dst;
+		GENERATE flatten(C) as src, B as dst;
+      };
+virtual_edges_by_dst = GROUP virtual_edges BY dst;
+out_set = FOREACH virtual_edges_by_dst {
+      		A = MIN($1.src);
+		B = (A < group? A: group);
+		C = $1.src;
+		GENERATE flatten(C) as src, B as dst;
+      };
+full_set = UNION in_set, out_set;
+index_0 = DISTINCT full_set;
+index_0_gpd = GROUP index_0 BY src;
+index = FOREACH index_0_gpd GENERATE MIN($1.dst);
+
+-- step 2: count indices, decide on termination
+indices_rpt = FOREACH index GENERATE dst;
+indices = DISTINCT indices_rpt;
+indices_gpd = GROUP indices ALL;
+index_count = FOREACH indices_gpd GENERATE COUNT($1);
+\d index_count
+
+-- step 3: update virtual edges --> repeat steps 1,2
+-- new_edges = UNION virtual_edges, index;
+-- virtual_edges = DISTINCT new_edges;
+virtual_edges = index;
+
+-- counts after 5 successive iterations:
+
+-- (2745)
+-- (1308)
+-- (81)
+-- (79)
+-- (79)
+
+
+
