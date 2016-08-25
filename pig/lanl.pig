@@ -324,7 +324,16 @@ icmp_vertex_count = FOREACH icmp_vertices_gpd GENERATE COUNT($1);
 -- (8767)
 
 /*--------------------------------
--- BUT note an apparent bug in case icmp_edges not stored/loaded,
+-- BUT note an apparent bug in 
+-- (2745)
+-- (1308)
+-- (81)
+-- (79)
+-- (79)
+
+
+
+case icmp_edges not stored/loaded,
 -- but part of data flow from flows.txt;
 -- lazy evaluation doesn't seem to work here...
 -- see
@@ -335,30 +344,24 @@ icmp_vertex_count = FOREACH icmp_vertices_gpd GENERATE COUNT($1);
 ---------------------------------------------------------------------------
 -- Connected components
 
+
 -- step 0: initialise virtual edges
-virtual_edges = FOREACH icmp_edges GENERATE src, dst;
+
+virtual_edges_init = FOREACH icmp_edges GENERATE src, dst;
+virtual_edges = FOREACH virtual_edges_init GENERATE src, dst;
 
 -- step 1: generate index
+
 virtual_edges_by_src = GROUP virtual_edges BY src;
-in_set = FOREACH virtual_edges_by_src {
-      		A = MIN($1.dst);
-		B = (A < group? A: group);
-		C = $1.dst;
-		GENERATE flatten(C) as src, B as dst;
+index_rpt = FOREACH virtual_edges_by_src {
+	    	A = FOREACH virtual_edges GENERATE flatten(TOBAG(src, dst));
+      		B = MIN(A);
+		GENERATE flatten(A) as src, B as dst;
       };
-virtual_edges_by_dst = GROUP virtual_edges BY dst;
-out_set = FOREACH virtual_edges_by_dst {
-      		A = MIN($1.src);
-		B = (A < group? A: group);
-		C = $1.src;
-		GENERATE flatten(C) as src, B as dst;
-      };
-full_set = UNION in_set, out_set;
-index_0 = DISTINCT full_set;
-index_0_gpd = GROUP index_0 BY src;
-index = FOREACH index_0_gpd GENERATE MIN($1.dst);
+index = DISTINCT index_rpt;
 
 -- step 2: count indices, decide on termination
+
 indices_rpt = FOREACH index GENERATE dst;
 indices = DISTINCT indices_rpt;
 indices_gpd = GROUP indices ALL;
@@ -366,17 +369,32 @@ index_count = FOREACH indices_gpd GENERATE COUNT($1);
 \d index_count
 
 -- step 3: update virtual edges --> repeat steps 1,2
--- new_edges = UNION virtual_edges, index;
--- virtual_edges = DISTINCT new_edges;
-virtual_edges = index;
+
+index_rev = FOREACH index GENERATE dst AS src, src AS dst;
+virtual_edges_new = UNION virtual_edges_init, index;
+virtual_edges_rpt = UNION virtual_edges_new, index_rev;
+virtual_edges = DISTINCT virtual_edges_rpt;
 
 -- counts after 5 successive iterations:
 
 -- (2745)
 -- (1308)
--- (81)
--- (79)
--- (79)
+-- (15)
+-- (5)
+-- (3)
+
+-- component sizes:
+
+index_gpd = GROUP index BY dst;
+comp_sizes = FOREACH index_gpd GENERATE group AS id, COUNT($1) AS size;
+\d comp_sizes
+
+-- (C10,8763)
+-- (C15978,2)
+-- (C20101,2)
+
+---------------------------------------------------------------------------
+--
 
 
 
