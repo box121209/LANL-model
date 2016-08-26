@@ -358,6 +358,7 @@ indices_rpt = FOREACH index GENERATE dst;
 indices = DISTINCT indices_rpt;
 indices_gpd = GROUP indices ALL;
 index_count = FOREACH indices_gpd GENERATE COUNT($1);
+
 \d index_count
 
 -- step 3: update virtual edges --> repeat steps 1,2
@@ -386,4 +387,40 @@ comp_sizes = FOREACH index_gpd GENERATE group AS id, COUNT($1) AS size;
 -- (C20101,2)
 
 ---------------------------------------------------------------------------
+-- Connected components - optimisation
+
+-- Note that after 5 iterations above the process consists of 17 map-reduces:
+
+\e index_count
+
+-- Can we reduce this?
+
+-- step 0: initialise virtual edges
+
+virtual_edges_init = FOREACH icmp_edges GENERATE src, dst;
+virtual_edges = FOREACH virtual_edges_init GENERATE src, dst;
+
+-- step 1: generate index
+
+virtual_edges_by_src = GROUP virtual_edges BY src;
+index = FOREACH virtual_edges_by_src {
+	    	A = FOREACH virtual_edges GENERATE flatten(TOBAG(src, dst));
+		B = DISTINCT A;
+      		C = MIN(B);
+		GENERATE flatten(B) as src, C as dst;
+      };
+
+-- step 2: count indices, decide on termination
+
+indices_rpt = FOREACH index GENERATE dst;
+indices = DISTINCT indices_rpt;
+indices_gpd = GROUP indices ALL;
+index_count = FOREACH indices_gpd GENERATE COUNT($1);
+
+-- step 3: update virtual edges --> repeat steps 1,2
+
+index_rev = FOREACH index GENERATE dst AS src, src AS dst;
+virtual_edges_new = UNION virtual_edges_init, index;
+virtual_edges_rpt = UNION virtual_edges_new, index_rev;
+virtual_edges = DISTINCT virtual_edges_rpt;
 
