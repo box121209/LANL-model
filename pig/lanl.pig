@@ -325,15 +325,7 @@ icmp_vertex_count = FOREACH icmp_vertices_gpd GENERATE COUNT($1);
 
 /*--------------------------------
 -- BUT note an apparent bug in 
--- (2745)
--- (1308)
--- (81)
--- (79)
--- (79)
-
-
-
-case icmp_edges not stored/loaded,
+-- case icmp_edges not stored/loaded,
 -- but part of data flow from flows.txt;
 -- lazy evaluation doesn't seem to work here...
 -- see
@@ -394,7 +386,4 @@ comp_sizes = FOREACH index_gpd GENERATE group AS id, COUNT($1) AS size;
 -- (C20101,2)
 
 ---------------------------------------------------------------------------
---
-
-
 
